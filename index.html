@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
-    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-audio-state="unknown" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" hidden></div>
+    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-audio-state="unknown" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" data-status-text="" data-is-drawing="false" data-committed-gesture-count="0" hidden></div>
     <div id="unity-container" class="unity-desktop">
       <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
       <div id="unity-loading-bar">
@@ -38,9 +38,15 @@
         helpVisible: false,
         guideCount: 0,
         levelSeed: "",
-        preflightPhase: "boot"
+        preflightPhase: "boot",
+        statusText: "",
+        isDrawing: false,
+        committedGestureCount: 0,
+        snapshotValue: ""
       };
+      var chorusTraceSmokeGeometry = null;
       var chorusTracePendingInteractionCount = 0;
+      var chorusTraceUnityInstance = null;
       var chorusTraceAutoAudioUnlockEnabled = shouldReportToLocalPreflight() &&
         chorusTracePreflightParams.get("chorustrace_preflight_audio_automation") === "auto";
       var chorusTraceAutoAudioUnlockScheduled = false;
@@ -66,6 +72,54 @@
 
       function shouldReportToLocalPreflight() {
         return window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
+      }
+
+      function shouldAllowReleaseSmoke() {
+        return chorusTracePreflightParams.get("chorustrace_release_smoke") === "force-on";
+      }
+
+      function cloneSmokePoint(point) {
+        if (!point || typeof point.x !== "number" || typeof point.y !== "number") {
+          return null;
+        }
+
+        return {
+          x: point.x,
+          y: point.y
+        };
+      }
+
+      function normalizeSmokeGeometry(rawGeometry) {
+        if (!rawGeometry || typeof rawGeometry !== "object") {
+          return null;
+        }
+
+        var boardStart = cloneSmokePoint(rawGeometry.boardStart);
+        var boardOutside = cloneSmokePoint(rawGeometry.boardOutside);
+        var partialStrokeEnd = cloneSmokePoint(rawGeometry.partialStrokeEnd);
+        if (!boardStart || !boardOutside || !partialStrokeEnd) {
+          return null;
+        }
+
+        return {
+          boardStart: boardStart,
+          boardOutside: boardOutside,
+          partialStrokeEnd: partialStrokeEnd
+        };
+      }
+
+      function convertUnityScreenPointToViewport(point) {
+        if (!point) {
+          return null;
+        }
+
+        var rect = canvas.getBoundingClientRect();
+        var width = canvas.width || rect.width || 1;
+        var height = canvas.height || rect.height || 1;
+        return {
+          x: rect.left + (point.x * rect.width / width),
+          y: rect.top + ((height - point.y) * rect.height / height)
+        };
       }
 
       function updateChorusTracePreflight(patch) {
@@ -112,6 +166,23 @@
             : "boot";
         }
 
+        if (Object.prototype.hasOwnProperty.call(patch, "status_text")) {
+          chorusTracePreflight.statusText = typeof patch.status_text === "string" ? patch.status_text : "";
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "is_drawing")) {
+          chorusTracePreflight.isDrawing = !!patch.is_drawing;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "committed_gesture_count")) {
+          var parsedGestureCount = Number.parseInt(patch.committed_gesture_count, 10);
+          chorusTracePreflight.committedGestureCount = Number.isFinite(parsedGestureCount) ? Math.max(0, parsedGestureCount) : 0;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "snapshot_value")) {
+          chorusTracePreflight.snapshotValue = typeof patch.snapshot_value === "string" ? patch.snapshot_value : "";
+        }
+
         if (chorusTracePreflightNode) {
           chorusTracePreflightNode.setAttribute("data-state", chorusTracePreflight.state);
           chorusTracePreflightNode.setAttribute("data-interaction-seen", chorusTracePreflight.interactionSeen ? "true" : "false");
@@ -122,6 +193,14 @@
           chorusTracePreflightNode.setAttribute("data-guide-count", String(chorusTracePreflight.guideCount));
           chorusTracePreflightNode.setAttribute("data-level-seed", chorusTracePreflight.levelSeed);
           chorusTracePreflightNode.setAttribute("data-preflight-phase", chorusTracePreflight.preflightPhase);
+          chorusTracePreflightNode.setAttribute("data-status-text", chorusTracePreflight.statusText);
+          chorusTracePreflightNode.setAttribute("data-is-drawing", chorusTracePreflight.isDrawing ? "true" : "false");
+          chorusTracePreflightNode.setAttribute("data-committed-gesture-count", String(chorusTracePreflight.committedGestureCount));
+          if (chorusTracePreflight.snapshotValue.length > 0) {
+            chorusTracePreflightNode.setAttribute("data-snapshot-value", chorusTracePreflight.snapshotValue);
+          } else {
+            chorusTracePreflightNode.removeAttribute("data-snapshot-value");
+          }
           if (chorusTracePreflight.details.length > 0) {
             chorusTracePreflightNode.setAttribute("data-details", chorusTracePreflight.details);
           } else {
@@ -253,6 +332,64 @@
         });
       };
 
+      window.ChorusTraceSetSmokeTelemetry = function(statusText, isDrawing, committedGestureCount, geometryJson, snapshotValue) {
+        var parsedGeometry = null;
+        if (typeof geometryJson === "string" && geometryJson.length > 0) {
+          try {
+            parsedGeometry = JSON.parse(geometryJson);
+          } catch (error) {
+            parsedGeometry = null;
+          }
+        }
+
+        chorusTraceSmokeGeometry = normalizeSmokeGeometry(parsedGeometry);
+        updateChorusTracePreflight({
+          status_text: typeof statusText === "string" ? statusText : "",
+          is_drawing: (isDrawing | 0) !== 0,
+          committed_gesture_count: committedGestureCount | 0,
+          snapshot_value: typeof snapshotValue === "string" ? snapshotValue : ""
+        });
+      };
+
+      window.ChorusTraceInvokeSmokeCommand = function(command) {
+        return new Promise(function(resolve) {
+          if (!shouldAllowReleaseSmoke()) {
+            resolve({ ok: false, reason: "release-smoke-disabled" });
+            return;
+          }
+
+          if (!chorusTraceUnityInstance || typeof chorusTraceUnityInstance.SendMessage !== "function") {
+            resolve({ ok: false, reason: "unity-instance-unavailable" });
+            return;
+          }
+
+          var normalizedCommand = typeof command === "string" ? command.trim() : "";
+          if (!normalizedCommand) {
+            resolve({ ok: false, reason: "command-required" });
+            return;
+          }
+
+          try {
+            chorusTraceUnityInstance.SendMessage("ChorusTraceAppHost", "HandleWebSmokeCommand", normalizedCommand);
+            resolve({ ok: true, command: normalizedCommand });
+          } catch (error) {
+            resolve({ ok: false, reason: String(error) });
+          }
+        });
+      };
+
+      window.ChorusTraceGetSmokeGeometry = function() {
+        if (!chorusTraceSmokeGeometry) {
+          return null;
+        }
+
+        return {
+          boardStart: convertUnityScreenPointToViewport(chorusTraceSmokeGeometry.boardStart),
+          boardOutside: convertUnityScreenPointToViewport(chorusTraceSmokeGeometry.boardOutside),
+          partialStrokeEnd: convertUnityScreenPointToViewport(chorusTraceSmokeGeometry.partialStrokeEnd)
+        };
+      };
+
       window.ChorusTraceConsumePendingInteractionSignal = function() {
         if (chorusTracePendingInteractionCount < 1) {
           return 0;
@@ -326,6 +463,7 @@
         createUnityInstance(canvas, config, (progress) => {
           document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
         }).then((unityInstance) => {
+          chorusTraceUnityInstance = unityInstance;
           setChorusTracePreflightState("unity-booted");
           document.querySelector("#unity-loading-bar").style.display = "none";
           document.querySelector("#unity-fullscreen-button").onclick = () => {
