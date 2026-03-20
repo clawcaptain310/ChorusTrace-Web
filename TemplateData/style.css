@@ -1,0 +1,138 @@
+html,
+body {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top, rgba(57, 92, 162, 0.32), transparent 42%),
+    linear-gradient(180deg, #090b13 0%, #05070d 100%);
+  color: #eef4ff;
+  font-family: Arial, sans-serif;
+}
+
+#unity-container {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+#unity-container.unity-desktop {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+#unity-container.unity-mobile {
+  position: fixed;
+  width: 100%;
+  height: 100%;
+}
+
+#unity-canvas {
+  display: block;
+  max-width: 96vw;
+  max-height: 86vh;
+  background: #231F20;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  border-radius: 18px;
+}
+
+.unity-mobile #unity-canvas {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
+#unity-loading-bar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 240px;
+  transform: translate(-50%, -50%);
+  display: none;
+}
+
+#unity-logo {
+  width: 100%;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(106, 181, 255, 0.22), rgba(205, 126, 255, 0.22));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  font-size: 24px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+#unity-progress-bar-empty {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#unity-progress-bar-full {
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #75c3ff 0%, #d68bff 100%);
+}
+
+#unity-footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  color: rgba(238, 244, 255, 0.88);
+}
+
+.unity-mobile #unity-footer {
+  display: none;
+}
+
+#unity-logo-title-footer {
+  min-width: 102px;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.78;
+}
+
+#unity-build-title {
+  margin-right: 10px;
+  line-height: 38px;
+  font-size: 18px;
+}
+
+#unity-fullscreen-button {
+  cursor: pointer;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  position: relative;
+}
+
+#unity-fullscreen-button::before {
+  content: "";
+  position: absolute;
+  inset: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+}
+
+#unity-warning {
+  position: absolute;
+  left: 50%;
+  top: 5%;
+  transform: translate(-50%);
+  display: none;
+  color: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}

@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Unity Web Player | ChorusTrace</title>
+    <link rel="stylesheet" href="TemplateData/style.css">
+  </head>
+  <body>
+    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-audio-state="unknown" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" hidden></div>
+    <div id="unity-container" class="unity-desktop">
+      <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-logo">Chorus Trace</div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+      </div>
+      <div id="unity-warning"></div>
+      <div id="unity-footer">
+        <div id="unity-logo-title-footer">Unity Web</div>
+        <div id="unity-fullscreen-button" aria-label="Fullscreen"></div>
+        <div id="unity-build-title">ChorusTrace</div>
+      </div>
+    </div>
+    <script>
+      var canvas = document.querySelector("#unity-canvas");
+      var chorusTracePreflightNode = document.querySelector("#chorustrace-preflight-status");
+      var chorusTracePreflightParams = new URLSearchParams(window.location.search);
+      var desktopAspect = 960 / 600;
+      var chorusTracePreflight = {
+        state: "shell",
+        details: "",
+        interactionSeen: false,
+        audioState: "unknown",
+        uiScreen: "unknown",
+        gameMode: "none",
+        helpVisible: false,
+        guideCount: 0,
+        levelSeed: "",
+        preflightPhase: "boot"
+      };
+      var chorusTracePendingInteractionCount = 0;
+      var chorusTraceAutoAudioUnlockEnabled = shouldReportToLocalPreflight() &&
+        chorusTracePreflightParams.get("chorustrace_preflight_audio_automation") === "auto";
+      var chorusTraceAutoAudioUnlockScheduled = false;
+
+      function resizeDesktopCanvas() {
+        if (!document.querySelector("#unity-container").classList.contains("unity-desktop")) {
+          return;
+        }
+
+        var maxWidth = Math.max(720, Math.floor(window.innerWidth * 0.96));
+        var maxHeight = Math.max(480, Math.floor(window.innerHeight * 0.86));
+        var width = maxWidth;
+        var height = Math.round(width / desktopAspect);
+
+        if (height > maxHeight) {
+          height = maxHeight;
+          width = Math.round(height * desktopAspect);
+        }
+
+        canvas.style.width = width + "px";
+        canvas.style.height = height + "px";
+      }
+
+      function shouldReportToLocalPreflight() {
+        return window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
+      }
+
+      function updateChorusTracePreflight(patch) {
+        if (Object.prototype.hasOwnProperty.call(patch, "state")) {
+          chorusTracePreflight.state = patch.state;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "details")) {
+          chorusTracePreflight.details = typeof patch.details === "string" ? patch.details : "";
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "interaction_seen")) {
+          chorusTracePreflight.interactionSeen = !!patch.interaction_seen;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "audio_state")) {
+          chorusTracePreflight.audioState = patch.audio_state || "unknown";
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "ui_screen")) {
+          chorusTracePreflight.uiScreen = patch.ui_screen || "unknown";
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "game_mode")) {
+          chorusTracePreflight.gameMode = patch.game_mode || "none";
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "help_visible")) {
+          chorusTracePreflight.helpVisible = !!patch.help_visible;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "guide_count")) {
+          var parsedGuideCount = Number.parseInt(patch.guide_count, 10);
+          chorusTracePreflight.guideCount = Number.isFinite(parsedGuideCount) ? Math.max(0, parsedGuideCount) : 0;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "level_seed")) {
+          chorusTracePreflight.levelSeed = typeof patch.level_seed === "string" ? patch.level_seed : "";
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "preflight_phase")) {
+          chorusTracePreflight.preflightPhase = typeof patch.preflight_phase === "string" && patch.preflight_phase.length > 0
+            ? patch.preflight_phase
+            : "boot";
+        }
+
+        if (chorusTracePreflightNode) {
+          chorusTracePreflightNode.setAttribute("data-state", chorusTracePreflight.state);
+          chorusTracePreflightNode.setAttribute("data-interaction-seen", chorusTracePreflight.interactionSeen ? "true" : "false");
+          chorusTracePreflightNode.setAttribute("data-audio-state", chorusTracePreflight.audioState);
+          chorusTracePreflightNode.setAttribute("data-ui-screen", chorusTracePreflight.uiScreen);
+          chorusTracePreflightNode.setAttribute("data-game-mode", chorusTracePreflight.gameMode);
+          chorusTracePreflightNode.setAttribute("data-help-visible", chorusTracePreflight.helpVisible ? "true" : "false");
+          chorusTracePreflightNode.setAttribute("data-guide-count", String(chorusTracePreflight.guideCount));
+          chorusTracePreflightNode.setAttribute("data-level-seed", chorusTracePreflight.levelSeed);
+          chorusTracePreflightNode.setAttribute("data-preflight-phase", chorusTracePreflight.preflightPhase);
+          if (chorusTracePreflight.details.length > 0) {
+            chorusTracePreflightNode.setAttribute("data-details", chorusTracePreflight.details);
+          } else {
+            chorusTracePreflightNode.removeAttribute("data-details");
+          }
+        }
+
+        if (!shouldReportToLocalPreflight()) {
+          maybeScheduleAutoAudioUnlockInteraction();
+          return;
+        }
+
+        var requestParams = [];
+        if (Object.prototype.hasOwnProperty.call(patch, "state")) {
+          requestParams.push("state=" + encodeURIComponent(chorusTracePreflight.state));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "details")) {
+          requestParams.push("details=" + encodeURIComponent(chorusTracePreflight.details));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "interaction_seen")) {
+          requestParams.push("interaction_seen=" + encodeURIComponent(chorusTracePreflight.interactionSeen ? "true" : "false"));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "audio_state")) {
+          requestParams.push("audio_state=" + encodeURIComponent(chorusTracePreflight.audioState));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "ui_screen")) {
+          requestParams.push("ui_screen=" + encodeURIComponent(chorusTracePreflight.uiScreen));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "game_mode")) {
+          requestParams.push("game_mode=" + encodeURIComponent(chorusTracePreflight.gameMode));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "help_visible")) {
+          requestParams.push("help_visible=" + encodeURIComponent(chorusTracePreflight.helpVisible ? "true" : "false"));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "guide_count")) {
+          requestParams.push("guide_count=" + encodeURIComponent(String(chorusTracePreflight.guideCount)));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "level_seed")) {
+          requestParams.push("level_seed=" + encodeURIComponent(chorusTracePreflight.levelSeed));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "preflight_phase")) {
+          requestParams.push("preflight_phase=" + encodeURIComponent(chorusTracePreflight.preflightPhase));
+        }
+
+        if (requestParams.length === 0) {
+          return;
+        }
+
+        var requestUrl = "/__chorustrace_preflight?" + requestParams.join("&");
+        fetch(requestUrl, { method: "GET", cache: "no-store" }).catch(() => {});
+        maybeScheduleAutoAudioUnlockInteraction();
+      }
+
+      function maybeScheduleAutoAudioUnlockInteraction() {
+        if (!chorusTraceAutoAudioUnlockEnabled || chorusTraceAutoAudioUnlockScheduled || chorusTracePreflight.interactionSeen) {
+          return;
+        }
+
+        if (chorusTracePreflight.audioState !== "locked") {
+          return;
+        }
+
+        var preflightSequence = chorusTracePreflightParams.get("chorustrace_preflight_sequence");
+        var requiresLifecycle = preflightSequence === "help-lifecycle" || preflightSequence === "help-replay";
+        if (requiresLifecycle) {
+          if (chorusTracePreflight.preflightPhase !== "after-reset") {
+            return;
+          }
+        } else if (chorusTracePreflight.state !== "unity-booted") {
+          return;
+        }
+
+        chorusTraceAutoAudioUnlockScheduled = true;
+        window.setTimeout(function() {
+          markChorusTraceInteractionSeen();
+        }, 1500);
+      }
+
+      function setChorusTracePreflightState(state, details) {
+        updateChorusTracePreflight({
+          state: state,
+          details: typeof details === "string" ? details : ""
+        });
+      }
+
+      function markChorusTraceInteractionSeen() {
+        chorusTracePendingInteractionCount += 1;
+        if (chorusTracePreflight.interactionSeen) {
+          return;
+        }
+
+        updateChorusTracePreflight({ interaction_seen: true });
+      }
+
+      function mapChorusTraceAudioState(audioState) {
+        switch (audioState | 0) {
+          case 1:
+            return "locked";
+          case 2:
+            return "unlocked";
+          case 3:
+            return "disabled";
+          default:
+            return "unknown";
+        }
+      }
+
+      window.ChorusTraceSetAudioPreflightState = function(audioState) {
+        updateChorusTracePreflight({ audio_state: mapChorusTraceAudioState(audioState) });
+      };
+
+      window.ChorusTraceSetGameplayPreflightState = function(uiScreen, gameMode, helpVisible, guideCount, levelSeed, preflightPhase) {
+        updateChorusTracePreflight({
+          ui_screen: typeof uiScreen === "string" ? uiScreen : "unknown",
+          game_mode: typeof gameMode === "string" ? gameMode : "none",
+          help_visible: (helpVisible | 0) !== 0,
+          guide_count: guideCount | 0,
+          level_seed: typeof levelSeed === "string" ? levelSeed : "",
+          preflight_phase: typeof preflightPhase === "string" ? preflightPhase : "boot"
+        });
+      };
+
+      window.ChorusTraceConsumePendingInteractionSignal = function() {
+        if (chorusTracePendingInteractionCount < 1) {
+          return 0;
+        }
+
+        chorusTracePendingInteractionCount = 0;
+        return 1;
+      };
+
+      document.addEventListener("pointerdown", markChorusTraceInteractionSeen, true);
+      document.addEventListener("touchstart", markChorusTraceInteractionSeen, true);
+      document.addEventListener("keydown", markChorusTraceInteractionSeen, true);
+
+      setChorusTracePreflightState("shell");
+
+      function unityShowBanner(msg, type) {
+        var warningBanner = document.querySelector("#unity-warning");
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? "block" : "none";
+        }
+        var div = document.createElement("div");
+        div.innerHTML = msg;
+        warningBanner.appendChild(div);
+        if (type == "error") div.style = "background: rgba(175, 57, 57, 0.92); padding: 10px;";
+        else {
+          if (type == "warning") div.style = "background: rgba(214, 159, 59, 0.92); padding: 10px;";
+          setTimeout(function() {
+            warningBanner.removeChild(div);
+            updateBannerVisibility();
+          }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/WebPages.loader.js";
+      var config = {
+        arguments: [],
+        dataUrl: buildUrl + "/WebPages.data.unityweb",
+        frameworkUrl: buildUrl + "/WebPages.framework.js.unityweb",
+        codeUrl: buildUrl + "/WebPages.wasm.unityweb",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "DefaultCompany",
+        productName: "ChorusTrace",
+        productVersion: "1.0",
+        showBanner: unityShowBanner,
+      };
+
+      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+        var meta = document.createElement("meta");
+        meta.name = "viewport";
+        meta.content = "width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes";
+        document.getElementsByTagName("head")[0].appendChild(meta);
+        document.querySelector("#unity-container").className = "unity-mobile";
+        canvas.className = "unity-mobile";
+
+      } else {
+        resizeDesktopCanvas();
+        window.addEventListener("resize", resizeDesktopCanvas);
+      }
+
+      document.querySelector("#unity-loading-bar").style.display = "block";
+      setChorusTracePreflightState("loader-requested");
+
+      var script = document.createElement("script");
+      script.onerror = () => {
+        setChorusTracePreflightState("unity-error", "loader-script");
+      };
+      script.src = loaderUrl;
+      script.onload = () => {
+        createUnityInstance(canvas, config, (progress) => {
+          document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
+        }).then((unityInstance) => {
+          setChorusTracePreflightState("unity-booted");
+          document.querySelector("#unity-loading-bar").style.display = "none";
+          document.querySelector("#unity-fullscreen-button").onclick = () => {
+            unityInstance.SetFullscreen(1);
+          };
+
+        }).catch((message) => {
+          setChorusTracePreflightState("unity-error", String(message));
+          alert(message);
+        });
+      };
+
+      document.body.appendChild(script);
+    </script>
+  </body>
+</html>
