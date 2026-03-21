@@ -46,10 +46,73 @@
       };
       var chorusTraceSmokeGeometry = null;
       var chorusTracePendingInteractionCount = 0;
+      var chorusTracePendingSmokeCommands = Object.create(null);
+      var chorusTraceLastSmokeCommandReceipt = null;
+      var chorusTraceSmokeCommandCounter = 0;
       var chorusTraceUnityInstance = null;
       var chorusTraceAutoAudioUnlockEnabled = shouldReportToLocalPreflight() &&
         chorusTracePreflightParams.get("chorustrace_preflight_audio_automation") === "auto";
       var chorusTraceAutoAudioUnlockScheduled = false;
+
+      function handleChorusTraceWorkerBridgeMessage(event) {
+        var data = event && event.data ? event.data : null;
+        if (!data || !data.__chorustrace_preflight_bridge || !data.payload) {
+          return;
+        }
+
+        var payload = data.payload;
+        switch (data.type) {
+          case "audio-state":
+            if (typeof window.ChorusTraceSetAudioPreflightState === "function") {
+              window.ChorusTraceSetAudioPreflightState(payload.audioState | 0);
+            }
+            break;
+          case "gameplay-state":
+            if (typeof window.ChorusTraceSetGameplayPreflightState === "function") {
+              window.ChorusTraceSetGameplayPreflightState(
+                payload.uiScreen || "",
+                payload.gameMode || "",
+                payload.helpVisible | 0,
+                payload.guideCount | 0,
+                payload.levelSeed || "",
+                payload.preflightPhase || "");
+            }
+            break;
+          case "smoke-telemetry":
+            if (typeof window.ChorusTraceSetSmokeTelemetry === "function") {
+              window.ChorusTraceSetSmokeTelemetry(
+                payload.statusText || "",
+                payload.isDrawing | 0,
+                payload.committedGestureCount | 0,
+                payload.geometryJson || "",
+                payload.snapshotValue || "");
+            }
+            break;
+          case "smoke-command-receipt":
+            if (typeof window.ChorusTraceSetSmokeCommandReceipt === "function") {
+              window.ChorusTraceSetSmokeCommandReceipt(payload.receiptJson || "");
+            }
+            break;
+          case "clipboard-write":
+            if (typeof window.ChorusTraceWriteClipboardText === "function") {
+              window.ChorusTraceWriteClipboardText(payload.clipboardText || "");
+            }
+            break;
+        }
+      }
+
+      if (typeof window.Worker === "function") {
+        var ChorusTraceOriginalWorker = window.Worker;
+        window.Worker = function(scriptURL, options) {
+          var worker = options === undefined
+            ? new ChorusTraceOriginalWorker(scriptURL)
+            : new ChorusTraceOriginalWorker(scriptURL, options);
+          worker.addEventListener("message", handleChorusTraceWorkerBridgeMessage);
+          return worker;
+        };
+        window.Worker.prototype = ChorusTraceOriginalWorker.prototype;
+        Object.setPrototypeOf(window.Worker, ChorusTraceOriginalWorker);
+      }
 
       function resizeDesktopCanvas() {
         if (!document.querySelector("#unity-container").classList.contains("unity-desktop")) {
@@ -106,6 +169,104 @@
           boardOutside: boardOutside,
           partialStrokeEnd: partialStrokeEnd
         };
+      }
+
+      function buildSmokeCommandStateSnapshot() {
+        return {
+          ui_screen: chorusTracePreflight.uiScreen || "unknown",
+          game_mode: chorusTracePreflight.gameMode || "none",
+          help_visible: !!chorusTracePreflight.helpVisible,
+          guide_count: chorusTracePreflight.guideCount | 0,
+          committed_gesture_count: chorusTracePreflight.committedGestureCount | 0,
+          status_text: chorusTracePreflight.statusText || "",
+          snapshot_value: chorusTracePreflight.snapshotValue || ""
+        };
+      }
+
+      function buildFallbackSmokeCommandReceipt(requestId, command, reason) {
+        var snapshot = buildSmokeCommandStateSnapshot();
+        return {
+          request_id: typeof requestId === "string" ? requestId : "",
+          command: typeof command === "string" ? command : "",
+          accepted: false,
+          reason: typeof reason === "string" ? reason : "command-unacknowledged",
+          ui_screen: snapshot.ui_screen,
+          game_mode: snapshot.game_mode,
+          help_visible: snapshot.help_visible,
+          guide_count: snapshot.guide_count,
+          committed_gesture_count: snapshot.committed_gesture_count,
+          status_text: snapshot.status_text,
+          snapshot_value: snapshot.snapshot_value
+        };
+      }
+
+      function createSmokeCommandRequestId() {
+        chorusTraceSmokeCommandCounter += 1;
+        return "smoke-" + Date.now().toString(36) + "-" + chorusTraceSmokeCommandCounter.toString(36);
+      }
+
+      function tryExecClipboardFallback(text) {
+        var textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "readonly");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        textarea.style.pointerEvents = "none";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+
+        try {
+          return document.execCommand("copy");
+        } catch (error) {
+          return false;
+        } finally {
+          document.body.removeChild(textarea);
+        }
+      }
+
+      function writeClipboardText(text) {
+        if (typeof text !== "string" || text.length === 0) {
+          return;
+        }
+
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          navigator.clipboard.writeText(text).catch(function() {
+            tryExecClipboardFallback(text);
+          });
+          return;
+        }
+
+        tryExecClipboardFallback(text);
+      }
+
+      function parseSmokeCommandReceipt(receiptJson) {
+        if (typeof receiptJson !== "string" || receiptJson.length === 0) {
+          return null;
+        }
+
+        try {
+          var parsed = JSON.parse(receiptJson);
+          if (!parsed || typeof parsed !== "object") {
+            return null;
+          }
+
+          return {
+            request_id: typeof parsed.request_id === "string" ? parsed.request_id : "",
+            command: typeof parsed.command === "string" ? parsed.command : "",
+            accepted: !!parsed.accepted,
+            reason: typeof parsed.reason === "string" ? parsed.reason : "",
+            ui_screen: typeof parsed.ui_screen === "string" ? parsed.ui_screen : "unknown",
+            game_mode: typeof parsed.game_mode === "string" ? parsed.game_mode : "none",
+            help_visible: !!parsed.help_visible,
+            guide_count: Number.isFinite(Number(parsed.guide_count)) ? Math.max(0, Number(parsed.guide_count) | 0) : 0,
+            committed_gesture_count: Number.isFinite(Number(parsed.committed_gesture_count)) ? Math.max(0, Number(parsed.committed_gesture_count) | 0) : 0,
+            status_text: typeof parsed.status_text === "string" ? parsed.status_text : "",
+            snapshot_value: typeof parsed.snapshot_value === "string" ? parsed.snapshot_value : ""
+          };
+        } catch (error) {
+          return null;
+        }
       }
 
       function convertUnityScreenPointToViewport(point) {
@@ -351,29 +512,73 @@
         });
       };
 
+      window.ChorusTraceSetSmokeCommandReceipt = function(receiptJson) {
+        var receipt = parseSmokeCommandReceipt(receiptJson);
+        if (!receipt) {
+          return;
+        }
+
+        chorusTraceLastSmokeCommandReceipt = receipt;
+        if (!receipt.request_id) {
+          return;
+        }
+
+        var pending = chorusTracePendingSmokeCommands[receipt.request_id];
+        if (!pending) {
+          return;
+        }
+
+        window.clearTimeout(pending.timeoutId);
+        delete chorusTracePendingSmokeCommands[receipt.request_id];
+        pending.resolve(receipt);
+      };
+
+      window.ChorusTraceGetLastSmokeCommandReceipt = function() {
+        return chorusTraceLastSmokeCommandReceipt;
+      };
+
+      window.ChorusTraceWriteClipboardText = function(text) {
+        writeClipboardText(text);
+      };
+
       window.ChorusTraceInvokeSmokeCommand = function(command) {
         return new Promise(function(resolve) {
           if (!shouldAllowReleaseSmoke()) {
-            resolve({ ok: false, reason: "release-smoke-disabled" });
+            resolve(buildFallbackSmokeCommandReceipt("", "", "release-smoke-disabled"));
             return;
           }
 
           if (!chorusTraceUnityInstance || typeof chorusTraceUnityInstance.SendMessage !== "function") {
-            resolve({ ok: false, reason: "unity-instance-unavailable" });
+            resolve(buildFallbackSmokeCommandReceipt("", "", "unity-instance-unavailable"));
             return;
           }
 
           var normalizedCommand = typeof command === "string" ? command.trim() : "";
           if (!normalizedCommand) {
-            resolve({ ok: false, reason: "command-required" });
+            resolve(buildFallbackSmokeCommandReceipt("", "", "command-required"));
             return;
           }
 
+          var requestId = createSmokeCommandRequestId();
+          var timeoutId = window.setTimeout(function() {
+            delete chorusTracePendingSmokeCommands[requestId];
+            resolve(buildFallbackSmokeCommandReceipt(requestId, normalizedCommand, "command-unacknowledged"));
+          }, 5000);
+          var envelopeJson = JSON.stringify({
+            request_id: requestId,
+            command: normalizedCommand
+          });
+          chorusTracePendingSmokeCommands[requestId] = {
+            resolve: resolve,
+            timeoutId: timeoutId
+          };
+
           try {
-            chorusTraceUnityInstance.SendMessage("ChorusTraceAppHost", "HandleWebSmokeCommand", normalizedCommand);
-            resolve({ ok: true, command: normalizedCommand });
+            chorusTraceUnityInstance.SendMessage("ChorusTraceAppHost", "ForwardWebSmokeCommand", envelopeJson);
           } catch (error) {
-            resolve({ ok: false, reason: String(error) });
+            window.clearTimeout(timeoutId);
+            delete chorusTracePendingSmokeCommands[requestId];
+            resolve(buildFallbackSmokeCommandReceipt(requestId, normalizedCommand, String(error)));
           }
         });
       };
