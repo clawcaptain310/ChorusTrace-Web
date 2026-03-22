@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
-    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-audio-state="unknown" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" data-status-text="" data-is-drawing="false" data-committed-gesture-count="0" hidden></div>
+    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-pending-interaction-count="0" data-audio-state="unknown" data-audio-unlock-source="none" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" data-status-text="" data-is-drawing="false" data-committed-gesture-count="0" hidden></div>
     <div id="unity-container" class="unity-desktop">
       <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
       <div id="unity-loading-bar">
@@ -32,7 +32,9 @@
         state: "shell",
         details: "",
         interactionSeen: false,
+        pendingInteractionCount: 0,
         audioState: "unknown",
+        audioUnlockSource: "none",
         uiScreen: "unknown",
         gameMode: "none",
         helpVisible: false,
@@ -65,6 +67,10 @@
       var chorusTraceAutoAudioUnlockEnabled = shouldReportToLocalPreflight() &&
         chorusTracePreflightParams.get("chorustrace_preflight_audio_automation") === "auto";
       var chorusTraceAutoAudioUnlockScheduled = false;
+      var chorusTraceAutoAudioUnlockStartedAtMs = 0;
+      var chorusTraceAutoAudioUnlockTimerId = 0;
+      var chorusTraceAutoAudioUnlockAttemptIntervalMs = 250;
+      var chorusTraceAutoAudioUnlockAttemptWindowMs = 10000;
 
       function handleChorusTraceWorkerBridgeMessage(event) {
         var data = event && event.data ? event.data : null;
@@ -87,7 +93,8 @@
                 payload.helpVisible | 0,
                 payload.guideCount | 0,
                 payload.levelSeed || "",
-                payload.preflightPhase || "");
+                payload.preflightPhase || "",
+                payload.audioUnlockSource || "none");
             }
             break;
           case "smoke-telemetry":
@@ -410,8 +417,21 @@
           chorusTracePreflight.interactionSeen = !!patch.interaction_seen;
         }
 
+        if (Object.prototype.hasOwnProperty.call(patch, "pending_interaction_count")) {
+          var parsedPendingInteractionCount = Number.parseInt(patch.pending_interaction_count, 10);
+          chorusTracePreflight.pendingInteractionCount = Number.isFinite(parsedPendingInteractionCount)
+            ? Math.max(0, parsedPendingInteractionCount)
+            : 0;
+        }
+
         if (Object.prototype.hasOwnProperty.call(patch, "audio_state")) {
           chorusTracePreflight.audioState = patch.audio_state || "unknown";
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "audio_unlock_source")) {
+          chorusTracePreflight.audioUnlockSource = typeof patch.audio_unlock_source === "string" && patch.audio_unlock_source.length > 0
+            ? patch.audio_unlock_source
+            : "none";
         }
 
         if (Object.prototype.hasOwnProperty.call(patch, "ui_screen")) {
@@ -461,7 +481,9 @@
         if (chorusTracePreflightNode) {
           chorusTracePreflightNode.setAttribute("data-state", chorusTracePreflight.state);
           chorusTracePreflightNode.setAttribute("data-interaction-seen", chorusTracePreflight.interactionSeen ? "true" : "false");
+          chorusTracePreflightNode.setAttribute("data-pending-interaction-count", String(chorusTracePreflight.pendingInteractionCount));
           chorusTracePreflightNode.setAttribute("data-audio-state", chorusTracePreflight.audioState);
+          chorusTracePreflightNode.setAttribute("data-audio-unlock-source", chorusTracePreflight.audioUnlockSource);
           chorusTracePreflightNode.setAttribute("data-ui-screen", chorusTracePreflight.uiScreen);
           chorusTracePreflightNode.setAttribute("data-game-mode", chorusTracePreflight.gameMode);
           chorusTracePreflightNode.setAttribute("data-help-visible", chorusTracePreflight.helpVisible ? "true" : "false");
@@ -501,8 +523,16 @@
           requestParams.push("interaction_seen=" + encodeURIComponent(chorusTracePreflight.interactionSeen ? "true" : "false"));
         }
 
+        if (Object.prototype.hasOwnProperty.call(patch, "pending_interaction_count")) {
+          requestParams.push("pending_interaction_count=" + encodeURIComponent(String(chorusTracePreflight.pendingInteractionCount)));
+        }
+
         if (Object.prototype.hasOwnProperty.call(patch, "audio_state")) {
           requestParams.push("audio_state=" + encodeURIComponent(chorusTracePreflight.audioState));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "audio_unlock_source")) {
+          requestParams.push("audio_unlock_source=" + encodeURIComponent(chorusTracePreflight.audioUnlockSource));
         }
 
         if (Object.prototype.hasOwnProperty.call(patch, "ui_screen")) {
@@ -538,29 +568,102 @@
         maybeScheduleAutoAudioUnlockInteraction();
       }
 
-      function maybeScheduleAutoAudioUnlockInteraction() {
-        if (!chorusTraceAutoAudioUnlockEnabled || chorusTraceAutoAudioUnlockScheduled || chorusTracePreflight.interactionSeen) {
-          return;
+      function shouldRunAutoAudioUnlockForCurrentState() {
+        if (!chorusTraceAutoAudioUnlockEnabled) {
+          return false;
         }
 
         if (chorusTracePreflight.audioState !== "locked") {
-          return;
+          return false;
         }
 
         var preflightSequence = chorusTracePreflightParams.get("chorustrace_preflight_sequence");
         var requiresLifecycle = preflightSequence === "help-lifecycle" || preflightSequence === "help-replay";
         if (requiresLifecycle) {
-          if (chorusTracePreflight.preflightPhase !== "after-reset") {
-            return;
-          }
-        } else if (chorusTracePreflight.state !== "unity-booted") {
+          return chorusTracePreflight.preflightPhase === "after-reset";
+        }
+
+        return chorusTracePreflight.state === "unity-booted";
+      }
+
+      function stopAutoAudioUnlockRetry(clearPendingCount) {
+        chorusTraceAutoAudioUnlockScheduled = false;
+        chorusTraceAutoAudioUnlockStartedAtMs = 0;
+        if (chorusTraceAutoAudioUnlockTimerId !== 0) {
+          window.clearTimeout(chorusTraceAutoAudioUnlockTimerId);
+          chorusTraceAutoAudioUnlockTimerId = 0;
+        }
+
+        if (clearPendingCount && chorusTracePendingInteractionCount !== 0) {
+          chorusTracePendingInteractionCount = 0;
+          updateChorusTracePreflight({ pending_interaction_count: 0 });
+        }
+      }
+
+      function scheduleNextAutoAudioUnlockRetry() {
+        if (!chorusTraceAutoAudioUnlockScheduled || chorusTraceAutoAudioUnlockTimerId !== 0) {
           return;
         }
 
+        chorusTraceAutoAudioUnlockTimerId = window.setTimeout(runAutoAudioUnlockRetry, chorusTraceAutoAudioUnlockAttemptIntervalMs);
+      }
+
+      function runAutoAudioUnlockRetry() {
+        chorusTraceAutoAudioUnlockTimerId = 0;
+        if (!chorusTraceAutoAudioUnlockScheduled) {
+          return;
+        }
+
+        if (chorusTracePreflight.audioState === "unlocked" || chorusTracePreflight.audioState === "disabled") {
+          stopAutoAudioUnlockRetry(true);
+          return;
+        }
+
+        if (!shouldRunAutoAudioUnlockForCurrentState()) {
+          scheduleNextAutoAudioUnlockRetry();
+          return;
+        }
+
+        if ((Date.now() - chorusTraceAutoAudioUnlockStartedAtMs) > chorusTraceAutoAudioUnlockAttemptWindowMs) {
+          stopAutoAudioUnlockRetry(false);
+          return;
+        }
+
+        markChorusTraceInteractionSeen();
+        tryInvokeUnityPendingInteraction();
+        scheduleNextAutoAudioUnlockRetry();
+      }
+
+      function maybeScheduleAutoAudioUnlockInteraction() {
+        if (chorusTracePreflight.audioState === "unlocked" || chorusTracePreflight.audioState === "disabled") {
+          stopAutoAudioUnlockRetry(true);
+          return;
+        }
+
+        if (!shouldRunAutoAudioUnlockForCurrentState()) {
+          return;
+        }
+
+        if (chorusTraceAutoAudioUnlockScheduled) {
+            return;
+        }
+
         chorusTraceAutoAudioUnlockScheduled = true;
-        window.setTimeout(function() {
-          markChorusTraceInteractionSeen();
-        }, 1500);
+        chorusTraceAutoAudioUnlockStartedAtMs = Date.now();
+        scheduleNextAutoAudioUnlockRetry();
+      }
+
+      function tryInvokeUnityPendingInteraction() {
+        if (!chorusTraceUnityInstance || typeof chorusTraceUnityInstance.SendMessage !== "function") {
+          return false;
+        }
+
+        try {
+          chorusTraceUnityInstance.SendMessage("ChorusTraceAppHost", "ForwardWebPreflightInteraction", "pending-bridge");
+          return true;
+        } catch (error) {
+          return false;
+        }
       }
 
       function setChorusTracePreflightState(state, details) {
@@ -572,11 +675,10 @@
 
       function markChorusTraceInteractionSeen() {
         chorusTracePendingInteractionCount += 1;
-        if (chorusTracePreflight.interactionSeen) {
-          return;
-        }
-
-        updateChorusTracePreflight({ interaction_seen: true });
+        updateChorusTracePreflight({
+          interaction_seen: true,
+          pending_interaction_count: chorusTracePendingInteractionCount
+        });
       }
 
       function mapChorusTraceAudioState(audioState) {
@@ -596,14 +698,15 @@
         updateChorusTracePreflight({ audio_state: mapChorusTraceAudioState(audioState) });
       };
 
-      window.ChorusTraceSetGameplayPreflightState = function(uiScreen, gameMode, helpVisible, guideCount, levelSeed, preflightPhase) {
+      window.ChorusTraceSetGameplayPreflightState = function(uiScreen, gameMode, helpVisible, guideCount, levelSeed, preflightPhase, audioUnlockSource) {
         updateChorusTracePreflight({
           ui_screen: typeof uiScreen === "string" ? uiScreen : "unknown",
           game_mode: typeof gameMode === "string" ? gameMode : "none",
           help_visible: (helpVisible | 0) !== 0,
           guide_count: guideCount | 0,
           level_seed: typeof levelSeed === "string" ? levelSeed : "",
-          preflight_phase: typeof preflightPhase === "string" ? preflightPhase : "boot"
+          preflight_phase: typeof preflightPhase === "string" ? preflightPhase : "boot",
+          audio_unlock_source: typeof audioUnlockSource === "string" && audioUnlockSource.length > 0 ? audioUnlockSource : "none"
         });
       };
 
@@ -719,6 +822,7 @@
         }
 
         chorusTracePendingInteractionCount = 0;
+        updateChorusTracePreflight({ pending_interaction_count: 0 });
         return 1;
       };
 
