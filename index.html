@@ -49,6 +49,18 @@
       var chorusTracePendingSmokeCommands = Object.create(null);
       var chorusTraceLastSmokeCommandReceipt = null;
       var chorusTraceSmokeCommandCounter = 0;
+      var chorusTraceClipboardWriteCounter = 0;
+      var chorusTraceClipboardWriteState = {
+        request_id: "",
+        expected_text: "",
+        status: "idle",
+        completed: false,
+        succeeded: false,
+        method: "",
+        failure_reason: "",
+        started_at_ms: 0,
+        completed_at_ms: 0
+      };
       var chorusTraceUnityInstance = null;
       var chorusTraceAutoAudioUnlockEnabled = shouldReportToLocalPreflight() &&
         chorusTracePreflightParams.get("chorustrace_preflight_audio_automation") === "auto";
@@ -205,6 +217,80 @@
         return "smoke-" + Date.now().toString(36) + "-" + chorusTraceSmokeCommandCounter.toString(36);
       }
 
+      function buildClipboardWriteStateSnapshot() {
+        return {
+          request_id: typeof chorusTraceClipboardWriteState.request_id === "string" ? chorusTraceClipboardWriteState.request_id : "",
+          expected_text: typeof chorusTraceClipboardWriteState.expected_text === "string" ? chorusTraceClipboardWriteState.expected_text : "",
+          status: typeof chorusTraceClipboardWriteState.status === "string" ? chorusTraceClipboardWriteState.status : "idle",
+          completed: !!chorusTraceClipboardWriteState.completed,
+          succeeded: !!chorusTraceClipboardWriteState.succeeded,
+          method: typeof chorusTraceClipboardWriteState.method === "string" ? chorusTraceClipboardWriteState.method : "",
+          failure_reason: typeof chorusTraceClipboardWriteState.failure_reason === "string" ? chorusTraceClipboardWriteState.failure_reason : "",
+          started_at_ms: Number.isFinite(Number(chorusTraceClipboardWriteState.started_at_ms)) ? Number(chorusTraceClipboardWriteState.started_at_ms) : 0,
+          completed_at_ms: Number.isFinite(Number(chorusTraceClipboardWriteState.completed_at_ms)) ? Number(chorusTraceClipboardWriteState.completed_at_ms) : 0
+        };
+      }
+
+      function createClipboardWriteRequestId() {
+        chorusTraceClipboardWriteCounter += 1;
+        return "clipboard-" + Date.now().toString(36) + "-" + chorusTraceClipboardWriteCounter.toString(36);
+      }
+
+      function beginClipboardWrite(text) {
+        var requestId = createClipboardWriteRequestId();
+        chorusTraceClipboardWriteState = {
+          request_id: requestId,
+          expected_text: text,
+          status: "pending",
+          completed: false,
+          succeeded: false,
+          method: "",
+          failure_reason: "",
+          started_at_ms: Date.now(),
+          completed_at_ms: 0
+        };
+        return requestId;
+      }
+
+      function finishClipboardWrite(requestId, succeeded, method, failureReason) {
+        if (!chorusTraceClipboardWriteState || chorusTraceClipboardWriteState.request_id !== requestId) {
+          return buildClipboardWriteStateSnapshot();
+        }
+
+        chorusTraceClipboardWriteState = {
+          request_id: requestId,
+          expected_text: chorusTraceClipboardWriteState.expected_text,
+          status: succeeded ? "succeeded" : "failed",
+          completed: true,
+          succeeded: !!succeeded,
+          method: typeof method === "string" ? method : "",
+          failure_reason: typeof failureReason === "string" ? failureReason : "",
+          started_at_ms: chorusTraceClipboardWriteState.started_at_ms,
+          completed_at_ms: Date.now()
+        };
+        return buildClipboardWriteStateSnapshot();
+      }
+
+      function getClipboardErrorText(error) {
+        if (!error) {
+          return "";
+        }
+
+        if (typeof error === "string") {
+          return error;
+        }
+
+        if (typeof error.message === "string" && error.message.length > 0) {
+          return error.message;
+        }
+
+        try {
+          return String(error);
+        } catch (stringifyError) {
+          return "unknown-error";
+        }
+      }
+
       function tryExecClipboardFallback(text) {
         var textarea = document.createElement("textarea");
         textarea.value = text;
@@ -227,17 +313,45 @@
 
       function writeClipboardText(text) {
         if (typeof text !== "string" || text.length === 0) {
-          return;
+          return Promise.resolve(buildClipboardWriteStateSnapshot());
+        }
+
+        var requestId = beginClipboardWrite(text);
+        function markClipboardWriteSuccess(method) {
+          return finishClipboardWrite(requestId, true, method, "");
+        }
+
+        function markClipboardWriteFailure(method, failureReason) {
+          var normalizedReason = typeof failureReason === "string" && failureReason.length > 0
+            ? failureReason
+            : "clipboard-write-failed";
+          return finishClipboardWrite(requestId, false, method, normalizedReason);
+        }
+
+        function tryClipboardFallback(initialReason) {
+          try {
+            if (tryExecClipboardFallback(text)) {
+              return markClipboardWriteSuccess("execCommand-fallback");
+            }
+
+            return markClipboardWriteFailure("execCommand-fallback", initialReason || "execCommand-copy-failed");
+          } catch (fallbackError) {
+            var fallbackReason = getClipboardErrorText(fallbackError);
+            return markClipboardWriteFailure(
+              "execCommand-fallback",
+              fallbackReason || initialReason || "execCommand-copy-failed");
+          }
         }
 
         if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-          navigator.clipboard.writeText(text).catch(function() {
-            tryExecClipboardFallback(text);
+          return navigator.clipboard.writeText(text).then(function() {
+            return markClipboardWriteSuccess("navigator.clipboard.writeText");
+          }).catch(function(error) {
+            return tryClipboardFallback(getClipboardErrorText(error) || "navigator.clipboard.writeText failed");
           });
-          return;
         }
 
-        tryExecClipboardFallback(text);
+        return Promise.resolve(tryClipboardFallback("navigator.clipboard-unavailable"));
       }
 
       function parseSmokeCommandReceipt(receiptJson) {
@@ -537,8 +651,12 @@
         return chorusTraceLastSmokeCommandReceipt;
       };
 
+      window.ChorusTraceGetClipboardWriteState = function() {
+        return buildClipboardWriteStateSnapshot();
+      };
+
       window.ChorusTraceWriteClipboardText = function(text) {
-        writeClipboardText(text);
+        return writeClipboardText(text);
       };
 
       window.ChorusTraceInvokeSmokeCommand = function(command) {
