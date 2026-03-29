@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
-    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-pending-interaction-count="0" data-audio-state="unknown" data-audio-unlock-source="none" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" data-status-text="" data-is-drawing="false" data-committed-gesture-count="0" hidden></div>
+    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-pending-interaction-count="0" data-audio-state="unknown" data-audio-unlock-source="none" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" data-status-text="" data-is-drawing="false" data-committed-gesture-count="0" data-shell-loaded-ms="" data-loader-requested-ms="" data-unity-booted-ms="" data-first-playable-board-ms="" data-first-committed-gesture-ms="" hidden></div>
     <div id="unity-container" class="unity-desktop">
       <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
       <div id="unity-loading-bar" role="status" aria-live="polite" aria-hidden="false">
@@ -86,6 +86,78 @@
       var chorusTraceLoadingShellVisibilityTimerId = 0;
       var chorusTraceLoadingShellFadeTimerId = 0;
       var chorusTraceDesktopCanvasResizeRequestId = 0;
+      var chorusTraceStartupTimingFallbackOriginMs = Date.now();
+      var chorusTraceStartupTiming = {
+        shellLoadedMs: null,
+        loaderRequestedMs: null,
+        unityBootedMs: null,
+        firstPlayableBoardMs: null,
+        firstCommittedGestureMs: null
+      };
+
+      function readChorusTraceNowMs() {
+        if (window.performance && typeof window.performance.now === "function") {
+          return Math.max(0, Math.round(window.performance.now()));
+        }
+
+        return Math.max(0, Date.now() - chorusTraceStartupTimingFallbackOriginMs);
+      }
+
+      function normalizeChorusTraceTimingMs(value) {
+        var parsedValue = Number(value);
+        if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+          return null;
+        }
+
+        return Math.round(parsedValue);
+      }
+
+      function markChorusTraceStartupTimingOnce(propertyName) {
+        if (!Object.prototype.hasOwnProperty.call(chorusTraceStartupTiming, propertyName)) {
+          return false;
+        }
+
+        if (chorusTraceStartupTiming[propertyName] !== null) {
+          return false;
+        }
+
+        chorusTraceStartupTiming[propertyName] = readChorusTraceNowMs();
+        return true;
+      }
+
+      function buildChorusTraceStartupTimingSnapshot() {
+        return {
+          shell_loaded_ms: normalizeChorusTraceTimingMs(chorusTraceStartupTiming.shellLoadedMs),
+          loader_requested_ms: normalizeChorusTraceTimingMs(chorusTraceStartupTiming.loaderRequestedMs),
+          unity_booted_ms: normalizeChorusTraceTimingMs(chorusTraceStartupTiming.unityBootedMs),
+          first_playable_board_ms: normalizeChorusTraceTimingMs(chorusTraceStartupTiming.firstPlayableBoardMs),
+          first_committed_gesture_ms: normalizeChorusTraceTimingMs(chorusTraceStartupTiming.firstCommittedGestureMs)
+        };
+      }
+
+      function syncChorusTraceStartupTimingMilestones() {
+        if (chorusTracePreflight.state === "loader-requested") {
+          markChorusTraceStartupTimingOnce("loaderRequestedMs");
+        }
+
+        if (chorusTracePreflight.state === "unity-booted") {
+          markChorusTraceStartupTimingOnce("unityBootedMs");
+        }
+
+        if (chorusTracePreflight.state === "unity-booted" &&
+            chorusTracePreflight.uiScreen === "gameplay" &&
+            typeof chorusTracePreflight.levelSeed === "string" &&
+            chorusTracePreflight.levelSeed.length > 0) {
+          markChorusTraceStartupTimingOnce("firstPlayableBoardMs");
+        }
+
+        if (chorusTraceStartupTiming.firstPlayableBoardMs !== null &&
+            chorusTracePreflight.committedGestureCount > 0) {
+          markChorusTraceStartupTimingOnce("firstCommittedGestureMs");
+        }
+      }
+
+      markChorusTraceStartupTimingOnce("shellLoadedMs");
 
       function handleChorusTraceWorkerBridgeMessage(event) {
         var data = event && event.data ? event.data : null;
@@ -336,6 +408,7 @@
         var boardStart = cloneSmokePoint(rawGeometry.boardStart);
         var boardOutside = cloneSmokePoint(rawGeometry.boardOutside);
         var partialStrokeEnd = cloneSmokePoint(rawGeometry.partialStrokeEnd);
+        var boardBounds = cloneSmokeRect(rawGeometry.boardBounds);
         var gameplayPanel = cloneSmokeRect(rawGeometry.gameplayPanel);
         var topBar = cloneSmokeRect(rawGeometry.topBar);
         var bottomBar = cloneSmokeRect(rawGeometry.bottomBar);
@@ -344,7 +417,12 @@
         var targetProgress = cloneSmokeRect(rawGeometry.targetProgress);
         var status = cloneSmokeRect(rawGeometry.status);
         var dailyBadge = cloneSmokeLabelRect(rawGeometry.dailyBadge);
-        if (!boardStart || !boardOutside || !partialStrokeEnd || !gameplayPanel || !topBar || !bottomBar || !instruction || !moves || !targetProgress || !status || !dailyBadge) {
+        var resultPanel = cloneSmokeVisualRect(rawGeometry.resultPanel);
+        var replayButton = cloneSmokeLabelRect(rawGeometry.replayButton);
+        var helpButton = cloneSmokeLabelRect(rawGeometry.helpButton);
+        var directionGuides = cloneSmokeGroupRect(rawGeometry.directionGuides);
+        var replayTrace = cloneSmokeGroupRect(rawGeometry.replayTrace);
+        if (!boardStart || !boardOutside || !partialStrokeEnd || !boardBounds || !gameplayPanel || !topBar || !bottomBar || !instruction || !moves || !targetProgress || !status || !dailyBadge || !resultPanel || !replayButton || !helpButton || !directionGuides || !replayTrace) {
           return null;
         }
 
@@ -352,6 +430,7 @@
           boardStart: boardStart,
           boardOutside: boardOutside,
           partialStrokeEnd: partialStrokeEnd,
+          boardBounds: boardBounds,
           gameplayPanel: gameplayPanel,
           topBar: topBar,
           bottomBar: bottomBar,
@@ -359,7 +438,12 @@
           moves: moves,
           targetProgress: targetProgress,
           status: status,
-          dailyBadge: dailyBadge
+          dailyBadge: dailyBadge,
+          resultPanel: resultPanel,
+          replayButton: replayButton,
+          helpButton: helpButton,
+          directionGuides: directionGuides,
+          replayTrace: replayTrace
         };
       }
 
@@ -603,6 +687,29 @@
         };
       }
 
+      function cloneSmokeVisualRect(visualRect) {
+        if (!visualRect || typeof visualRect !== "object") {
+          return null;
+        }
+
+        return {
+          visible: !!visualRect.visible,
+          rect: cloneSmokeRect(visualRect.rect)
+        };
+      }
+
+      function cloneSmokeGroupRect(groupRect) {
+        if (!groupRect || typeof groupRect !== "object") {
+          return null;
+        }
+
+        return {
+          visible: !!groupRect.visible,
+          count: Number.isFinite(Number(groupRect.count)) ? Math.max(0, Number(groupRect.count) | 0) : 0,
+          rect: cloneSmokeRect(groupRect.rect)
+        };
+      }
+
       function convertUnityScreenRectToViewport(rect) {
         if (!rect) {
           return null;
@@ -712,7 +819,10 @@
           chorusTracePreflight.snapshotValue = typeof patch.snapshot_value === "string" ? patch.snapshot_value : "";
         }
 
+        syncChorusTraceStartupTimingMilestones();
+
         if (chorusTracePreflightNode) {
+          var startupTimingSnapshot = buildChorusTraceStartupTimingSnapshot();
           chorusTracePreflightNode.setAttribute("data-state", chorusTracePreflight.state);
           chorusTracePreflightNode.setAttribute("data-interaction-seen", chorusTracePreflight.interactionSeen ? "true" : "false");
           chorusTracePreflightNode.setAttribute("data-pending-interaction-count", String(chorusTracePreflight.pendingInteractionCount));
@@ -727,6 +837,11 @@
           chorusTracePreflightNode.setAttribute("data-status-text", chorusTracePreflight.statusText);
           chorusTracePreflightNode.setAttribute("data-is-drawing", chorusTracePreflight.isDrawing ? "true" : "false");
           chorusTracePreflightNode.setAttribute("data-committed-gesture-count", String(chorusTracePreflight.committedGestureCount));
+          chorusTracePreflightNode.setAttribute("data-shell-loaded-ms", startupTimingSnapshot.shell_loaded_ms !== null ? String(startupTimingSnapshot.shell_loaded_ms) : "");
+          chorusTracePreflightNode.setAttribute("data-loader-requested-ms", startupTimingSnapshot.loader_requested_ms !== null ? String(startupTimingSnapshot.loader_requested_ms) : "");
+          chorusTracePreflightNode.setAttribute("data-unity-booted-ms", startupTimingSnapshot.unity_booted_ms !== null ? String(startupTimingSnapshot.unity_booted_ms) : "");
+          chorusTracePreflightNode.setAttribute("data-first-playable-board-ms", startupTimingSnapshot.first_playable_board_ms !== null ? String(startupTimingSnapshot.first_playable_board_ms) : "");
+          chorusTracePreflightNode.setAttribute("data-first-committed-gesture-ms", startupTimingSnapshot.first_committed_gesture_ms !== null ? String(startupTimingSnapshot.first_committed_gesture_ms) : "");
           if (chorusTracePreflight.snapshotValue.length > 0) {
             chorusTracePreflightNode.setAttribute("data-snapshot-value", chorusTracePreflight.snapshotValue);
           } else {
@@ -794,6 +909,13 @@
         if (Object.prototype.hasOwnProperty.call(patch, "preflight_phase")) {
           requestParams.push("preflight_phase=" + encodeURIComponent(chorusTracePreflight.preflightPhase));
         }
+
+        var startupTimingForRequest = buildChorusTraceStartupTimingSnapshot();
+        requestParams.push("shell_loaded_ms=" + encodeURIComponent(startupTimingForRequest.shell_loaded_ms !== null ? String(startupTimingForRequest.shell_loaded_ms) : ""));
+        requestParams.push("loader_requested_ms=" + encodeURIComponent(startupTimingForRequest.loader_requested_ms !== null ? String(startupTimingForRequest.loader_requested_ms) : ""));
+        requestParams.push("unity_booted_ms=" + encodeURIComponent(startupTimingForRequest.unity_booted_ms !== null ? String(startupTimingForRequest.unity_booted_ms) : ""));
+        requestParams.push("first_playable_board_ms=" + encodeURIComponent(startupTimingForRequest.first_playable_board_ms !== null ? String(startupTimingForRequest.first_playable_board_ms) : ""));
+        requestParams.push("first_committed_gesture_ms=" + encodeURIComponent(startupTimingForRequest.first_committed_gesture_ms !== null ? String(startupTimingForRequest.first_committed_gesture_ms) : ""));
 
         if (requestParams.length === 0) {
           return;
@@ -994,6 +1116,10 @@
         return buildClipboardWriteStateSnapshot();
       };
 
+      window.ChorusTraceGetStartupTimingMetrics = function() {
+        return buildChorusTraceStartupTimingSnapshot();
+      };
+
       window.ChorusTraceWriteClipboardText = function(text) {
         return writeClipboardText(text);
       };
@@ -1049,6 +1175,7 @@
           boardStart: convertUnityScreenPointToViewport(chorusTraceSmokeGeometry.boardStart),
           boardOutside: convertUnityScreenPointToViewport(chorusTraceSmokeGeometry.boardOutside),
           partialStrokeEnd: convertUnityScreenPointToViewport(chorusTraceSmokeGeometry.partialStrokeEnd),
+          boardBounds: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.boardBounds),
           gameplayPanel: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.gameplayPanel),
           topBar: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.topBar),
           bottomBar: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.bottomBar),
@@ -1060,6 +1187,30 @@
             visible: !!chorusTraceSmokeGeometry.dailyBadge.visible,
             text: typeof chorusTraceSmokeGeometry.dailyBadge.text === "string" ? chorusTraceSmokeGeometry.dailyBadge.text : "",
             rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.dailyBadge.rect)
+          } : null,
+          resultPanel: chorusTraceSmokeGeometry.resultPanel ? {
+            visible: !!chorusTraceSmokeGeometry.resultPanel.visible,
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.resultPanel.rect)
+          } : null,
+          replayButton: chorusTraceSmokeGeometry.replayButton ? {
+            visible: !!chorusTraceSmokeGeometry.replayButton.visible,
+            text: typeof chorusTraceSmokeGeometry.replayButton.text === "string" ? chorusTraceSmokeGeometry.replayButton.text : "",
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.replayButton.rect)
+          } : null,
+          helpButton: chorusTraceSmokeGeometry.helpButton ? {
+            visible: !!chorusTraceSmokeGeometry.helpButton.visible,
+            text: typeof chorusTraceSmokeGeometry.helpButton.text === "string" ? chorusTraceSmokeGeometry.helpButton.text : "",
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.helpButton.rect)
+          } : null,
+          directionGuides: chorusTraceSmokeGeometry.directionGuides ? {
+            visible: !!chorusTraceSmokeGeometry.directionGuides.visible,
+            count: Number.isFinite(Number(chorusTraceSmokeGeometry.directionGuides.count)) ? Math.max(0, Number(chorusTraceSmokeGeometry.directionGuides.count) | 0) : 0,
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.directionGuides.rect)
+          } : null,
+          replayTrace: chorusTraceSmokeGeometry.replayTrace ? {
+            visible: !!chorusTraceSmokeGeometry.replayTrace.visible,
+            count: Number.isFinite(Number(chorusTraceSmokeGeometry.replayTrace.count)) ? Math.max(0, Number(chorusTraceSmokeGeometry.replayTrace.count) | 0) : 0,
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.replayTrace.rect)
           } : null
         };
       };
