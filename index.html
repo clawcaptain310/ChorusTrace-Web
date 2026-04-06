@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
-    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-pending-interaction-count="0" data-audio-state="unknown" data-audio-unlock-source="none" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" data-status-code="idle" data-status-text="" data-is-drawing="false" data-committed-gesture-count="0" data-shell-loaded-ms="" data-loader-requested-ms="" data-unity-booted-ms="" data-first-playable-board-ms="" data-first-committed-gesture-ms="" hidden></div>
+    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-pending-interaction-count="0" data-audio-state="unknown" data-audio-unlock-source="none" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" data-status-code="idle" data-status-text="" data-tutorial-index="-1" data-instruction-text="" data-is-drawing="false" data-committed-gesture-count="0" data-shell-loaded-ms="" data-loader-requested-ms="" data-unity-booted-ms="" data-first-playable-board-ms="" data-first-committed-gesture-ms="" hidden></div>
     <div id="unity-container" class="unity-desktop">
       <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
       <div id="unity-loading-bar" role="status" aria-live="polite" aria-hidden="false">
@@ -50,6 +50,8 @@
         preflightPhase: "boot",
         statusCode: "idle",
         statusText: "",
+        tutorialIndex: -1,
+        instructionText: "",
         isDrawing: false,
         committedGestureCount: 0,
         snapshotValue: ""
@@ -193,7 +195,9 @@
                 payload.isDrawing | 0,
                 payload.committedGestureCount | 0,
                 payload.geometryJson || "",
-                payload.snapshotValue || "");
+                payload.snapshotValue || "",
+                payload.tutorialIndex | 0,
+                payload.instructionText || "");
             }
             break;
           case "smoke-command-receipt":
@@ -420,11 +424,12 @@
         var status = cloneSmokeRect(rawGeometry.status);
         var dailyBadge = cloneSmokeLabelRect(rawGeometry.dailyBadge);
         var resultPanel = cloneSmokeVisualRect(rawGeometry.resultPanel);
+        var continueButton = cloneSmokeLabelRect(rawGeometry.continueButton);
         var replayButton = cloneSmokeLabelRect(rawGeometry.replayButton);
         var helpButton = cloneSmokeLabelRect(rawGeometry.helpButton);
         var directionGuides = cloneSmokeGroupRect(rawGeometry.directionGuides);
         var replayTrace = cloneSmokeGroupRect(rawGeometry.replayTrace);
-        if (!boardStart || !boardOutside || !partialStrokeEnd || !boardBounds || !gameplayPanel || !topBar || !bottomBar || !instruction || !moves || !targetProgress || !status || !dailyBadge || !resultPanel || !replayButton || !helpButton || !directionGuides || !replayTrace) {
+        if (!boardStart || !boardOutside || !partialStrokeEnd || !boardBounds || !gameplayPanel || !topBar || !bottomBar || !instruction || !moves || !targetProgress || !status || !dailyBadge || !resultPanel || !continueButton || !replayButton || !helpButton || !directionGuides || !replayTrace) {
           return null;
         }
 
@@ -442,6 +447,7 @@
           status: status,
           dailyBadge: dailyBadge,
           resultPanel: resultPanel,
+          continueButton: continueButton,
           replayButton: replayButton,
           helpButton: helpButton,
           directionGuides: directionGuides,
@@ -458,7 +464,9 @@
           committed_gesture_count: chorusTracePreflight.committedGestureCount | 0,
           status_code: chorusTracePreflight.statusCode || "idle",
           status_text: chorusTracePreflight.statusText || "",
-          snapshot_value: chorusTracePreflight.snapshotValue || ""
+          snapshot_value: chorusTracePreflight.snapshotValue || "",
+          tutorial_index: chorusTracePreflight.tutorialIndex | 0,
+          instruction_text: chorusTracePreflight.instructionText || ""
         };
       }
 
@@ -476,7 +484,9 @@
           committed_gesture_count: snapshot.committed_gesture_count,
           status_code: snapshot.status_code,
           status_text: snapshot.status_text,
-          snapshot_value: snapshot.snapshot_value
+          snapshot_value: snapshot.snapshot_value,
+          tutorial_index: snapshot.tutorial_index,
+          instruction_text: snapshot.instruction_text
         };
       }
 
@@ -645,7 +655,9 @@
             committed_gesture_count: Number.isFinite(Number(parsed.committed_gesture_count)) ? Math.max(0, Number(parsed.committed_gesture_count) | 0) : 0,
             status_code: typeof parsed.status_code === "string" && parsed.status_code.length > 0 ? parsed.status_code : "idle",
             status_text: typeof parsed.status_text === "string" ? parsed.status_text : "",
-            snapshot_value: typeof parsed.snapshot_value === "string" ? parsed.snapshot_value : ""
+            snapshot_value: typeof parsed.snapshot_value === "string" ? parsed.snapshot_value : "",
+            tutorial_index: Number.isFinite(Number(parsed.tutorial_index)) ? Math.max(-1, Number(parsed.tutorial_index) | 0) : -1,
+            instruction_text: typeof parsed.instruction_text === "string" ? parsed.instruction_text : ""
           };
         } catch (error) {
           return null;
@@ -817,6 +829,15 @@
             : "idle";
         }
 
+        if (Object.prototype.hasOwnProperty.call(patch, "tutorial_index")) {
+          var parsedTutorialIndex = Number.parseInt(patch.tutorial_index, 10);
+          chorusTracePreflight.tutorialIndex = Number.isFinite(parsedTutorialIndex) ? Math.max(-1, parsedTutorialIndex) : -1;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "instruction_text")) {
+          chorusTracePreflight.instructionText = typeof patch.instruction_text === "string" ? patch.instruction_text : "";
+        }
+
         if (Object.prototype.hasOwnProperty.call(patch, "is_drawing")) {
           chorusTracePreflight.isDrawing = !!patch.is_drawing;
         }
@@ -847,6 +868,8 @@
           chorusTracePreflightNode.setAttribute("data-preflight-phase", chorusTracePreflight.preflightPhase);
           chorusTracePreflightNode.setAttribute("data-status-code", chorusTracePreflight.statusCode);
           chorusTracePreflightNode.setAttribute("data-status-text", chorusTracePreflight.statusText);
+          chorusTracePreflightNode.setAttribute("data-tutorial-index", String(chorusTracePreflight.tutorialIndex));
+          chorusTracePreflightNode.setAttribute("data-instruction-text", chorusTracePreflight.instructionText);
           chorusTracePreflightNode.setAttribute("data-is-drawing", chorusTracePreflight.isDrawing ? "true" : "false");
           chorusTracePreflightNode.setAttribute("data-committed-gesture-count", String(chorusTracePreflight.committedGestureCount));
           chorusTracePreflightNode.setAttribute("data-shell-loaded-ms", startupTimingSnapshot.shell_loaded_ms !== null ? String(startupTimingSnapshot.shell_loaded_ms) : "");
@@ -924,6 +947,14 @@
 
         if (Object.prototype.hasOwnProperty.call(patch, "status_code")) {
           requestParams.push("status_code=" + encodeURIComponent(chorusTracePreflight.statusCode));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "tutorial_index")) {
+          requestParams.push("tutorial_index=" + encodeURIComponent(String(chorusTracePreflight.tutorialIndex)));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "instruction_text")) {
+          requestParams.push("instruction_text=" + encodeURIComponent(chorusTracePreflight.instructionText));
         }
 
         var startupTimingForRequest = buildChorusTraceStartupTimingSnapshot();
@@ -1084,7 +1115,7 @@
         });
       };
 
-      window.ChorusTraceSetSmokeTelemetry = function(statusText, statusCode, isDrawing, committedGestureCount, geometryJson, snapshotValue) {
+      window.ChorusTraceSetSmokeTelemetry = function(statusText, statusCode, isDrawing, committedGestureCount, geometryJson, snapshotValue, tutorialIndex, instructionText) {
         var parsedGeometry = null;
         if (typeof geometryJson === "string" && geometryJson.length > 0) {
           try {
@@ -1098,6 +1129,8 @@
         updateChorusTracePreflight({
           status_code: typeof statusCode === "string" && statusCode.length > 0 ? statusCode : "idle",
           status_text: typeof statusText === "string" ? statusText : "",
+          tutorial_index: Number.isFinite(Number(tutorialIndex)) ? Number(tutorialIndex) : -1,
+          instruction_text: typeof instructionText === "string" ? instructionText : "",
           is_drawing: (isDrawing | 0) !== 0,
           committed_gesture_count: committedGestureCount | 0,
           snapshot_value: typeof snapshotValue === "string" ? snapshotValue : ""
@@ -1208,6 +1241,11 @@
           resultPanel: chorusTraceSmokeGeometry.resultPanel ? {
             visible: !!chorusTraceSmokeGeometry.resultPanel.visible,
             rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.resultPanel.rect)
+          } : null,
+          continueButton: chorusTraceSmokeGeometry.continueButton ? {
+            visible: !!chorusTraceSmokeGeometry.continueButton.visible,
+            text: typeof chorusTraceSmokeGeometry.continueButton.text === "string" ? chorusTraceSmokeGeometry.continueButton.text : "",
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.continueButton.rect)
           } : null,
           replayButton: chorusTraceSmokeGeometry.replayButton ? {
             visible: !!chorusTraceSmokeGeometry.replayButton.visible,
