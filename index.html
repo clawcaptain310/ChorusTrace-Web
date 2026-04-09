@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="TemplateData/style.css">
   </head>
   <body>
-    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-pending-interaction-count="0" data-audio-state="unknown" data-audio-unlock-source="none" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" data-status-code="idle" data-status-text="" data-tutorial-index="-1" data-instruction-text="" data-is-drawing="false" data-committed-gesture-count="0" data-shell-loaded-ms="" data-loader-requested-ms="" data-unity-booted-ms="" data-first-playable-board-ms="" data-first-committed-gesture-ms="" hidden></div>
+    <div id="chorustrace-preflight-status" data-state="shell" data-interaction-seen="false" data-pending-interaction-count="0" data-audio-state="unknown" data-audio-unlock-source="none" data-ui-screen="unknown" data-game-mode="none" data-help-visible="false" data-guide-count="0" data-level-seed="" data-preflight-phase="boot" data-status-code="idle" data-status-text="" data-tutorial-index="-1" data-instruction-text="" data-title-primary-text="" data-title-modes-visible="false" data-focused-control-name="" data-tutorial-button-text="" data-is-drawing="false" data-committed-gesture-count="0" data-shell-loaded-ms="" data-loader-requested-ms="" data-unity-booted-ms="" data-first-playable-board-ms="" data-first-committed-gesture-ms="" hidden></div>
     <div id="unity-container" class="unity-desktop">
       <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
       <div id="unity-loading-bar" role="status" aria-live="polite" aria-hidden="false">
@@ -52,6 +52,10 @@
         statusText: "",
         tutorialIndex: -1,
         instructionText: "",
+        titlePrimaryText: "",
+        titleModesVisible: false,
+        focusedControlName: "",
+        tutorialButtonText: "",
         isDrawing: false,
         committedGestureCount: 0,
         snapshotValue: ""
@@ -197,7 +201,11 @@
                 payload.geometryJson || "",
                 payload.snapshotValue || "",
                 payload.tutorialIndex | 0,
-                payload.instructionText || "");
+                payload.instructionText || "",
+                payload.titlePrimaryText || "",
+                payload.titleModesVisible | 0,
+                payload.focusedControlName || "",
+                payload.tutorialButtonText || "");
             }
             break;
           case "smoke-command-receipt":
@@ -427,11 +435,12 @@
         var continueButton = cloneSmokeLabelRect(rawGeometry.continueButton);
         var replayButton = cloneSmokeLabelRect(rawGeometry.replayButton);
         var helpButton = cloneSmokeLabelRect(rawGeometry.helpButton);
+        var beginButton = cloneSmokeLabelRect(rawGeometry.beginButton);
+        var titleModesButton = cloneSmokeLabelRect(rawGeometry.titleModesButton);
+        var modeBackButton = cloneSmokeLabelRect(rawGeometry.modeBackButton);
+        var tutorialButton = cloneSmokeLabelRect(rawGeometry.tutorialButton);
         var directionGuides = cloneSmokeGroupRect(rawGeometry.directionGuides);
         var replayTrace = cloneSmokeGroupRect(rawGeometry.replayTrace);
-        if (!boardStart || !boardOutside || !partialStrokeEnd || !boardBounds || !gameplayPanel || !topBar || !bottomBar || !instruction || !moves || !targetProgress || !status || !dailyBadge || !resultPanel || !continueButton || !replayButton || !helpButton || !directionGuides || !replayTrace) {
-          return null;
-        }
 
         return {
           boardStart: boardStart,
@@ -450,6 +459,10 @@
           continueButton: continueButton,
           replayButton: replayButton,
           helpButton: helpButton,
+          beginButton: beginButton,
+          titleModesButton: titleModesButton,
+          modeBackButton: modeBackButton,
+          tutorialButton: tutorialButton,
           directionGuides: directionGuides,
           replayTrace: replayTrace
         };
@@ -466,7 +479,11 @@
           status_text: chorusTracePreflight.statusText || "",
           snapshot_value: chorusTracePreflight.snapshotValue || "",
           tutorial_index: chorusTracePreflight.tutorialIndex | 0,
-          instruction_text: chorusTracePreflight.instructionText || ""
+          instruction_text: chorusTracePreflight.instructionText || "",
+          title_primary_text: chorusTracePreflight.titlePrimaryText || "",
+          title_modes_visible: !!chorusTracePreflight.titleModesVisible,
+          focused_control_name: chorusTracePreflight.focusedControlName || "",
+          tutorial_button_text: chorusTracePreflight.tutorialButtonText || ""
         };
       }
 
@@ -486,7 +503,11 @@
           status_text: snapshot.status_text,
           snapshot_value: snapshot.snapshot_value,
           tutorial_index: snapshot.tutorial_index,
-          instruction_text: snapshot.instruction_text
+          instruction_text: snapshot.instruction_text,
+          title_primary_text: snapshot.title_primary_text,
+          title_modes_visible: snapshot.title_modes_visible,
+          focused_control_name: snapshot.focused_control_name,
+          tutorial_button_text: snapshot.tutorial_button_text
         };
       }
 
@@ -657,7 +678,11 @@
             status_text: typeof parsed.status_text === "string" ? parsed.status_text : "",
             snapshot_value: typeof parsed.snapshot_value === "string" ? parsed.snapshot_value : "",
             tutorial_index: Number.isFinite(Number(parsed.tutorial_index)) ? Math.max(-1, Number(parsed.tutorial_index) | 0) : -1,
-            instruction_text: typeof parsed.instruction_text === "string" ? parsed.instruction_text : ""
+            instruction_text: typeof parsed.instruction_text === "string" ? parsed.instruction_text : "",
+            title_primary_text: typeof parsed.title_primary_text === "string" ? parsed.title_primary_text : "",
+            title_modes_visible: !!parsed.title_modes_visible,
+            focused_control_name: typeof parsed.focused_control_name === "string" ? parsed.focused_control_name : "",
+            tutorial_button_text: typeof parsed.tutorial_button_text === "string" ? parsed.tutorial_button_text : ""
           };
         } catch (error) {
           return null;
@@ -838,6 +863,22 @@
           chorusTracePreflight.instructionText = typeof patch.instruction_text === "string" ? patch.instruction_text : "";
         }
 
+        if (Object.prototype.hasOwnProperty.call(patch, "title_primary_text")) {
+          chorusTracePreflight.titlePrimaryText = typeof patch.title_primary_text === "string" ? patch.title_primary_text : "";
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "title_modes_visible")) {
+          chorusTracePreflight.titleModesVisible = !!patch.title_modes_visible;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "focused_control_name")) {
+          chorusTracePreflight.focusedControlName = typeof patch.focused_control_name === "string" ? patch.focused_control_name : "";
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "tutorial_button_text")) {
+          chorusTracePreflight.tutorialButtonText = typeof patch.tutorial_button_text === "string" ? patch.tutorial_button_text : "";
+        }
+
         if (Object.prototype.hasOwnProperty.call(patch, "is_drawing")) {
           chorusTracePreflight.isDrawing = !!patch.is_drawing;
         }
@@ -870,6 +911,10 @@
           chorusTracePreflightNode.setAttribute("data-status-text", chorusTracePreflight.statusText);
           chorusTracePreflightNode.setAttribute("data-tutorial-index", String(chorusTracePreflight.tutorialIndex));
           chorusTracePreflightNode.setAttribute("data-instruction-text", chorusTracePreflight.instructionText);
+          chorusTracePreflightNode.setAttribute("data-title-primary-text", chorusTracePreflight.titlePrimaryText);
+          chorusTracePreflightNode.setAttribute("data-title-modes-visible", chorusTracePreflight.titleModesVisible ? "true" : "false");
+          chorusTracePreflightNode.setAttribute("data-focused-control-name", chorusTracePreflight.focusedControlName);
+          chorusTracePreflightNode.setAttribute("data-tutorial-button-text", chorusTracePreflight.tutorialButtonText);
           chorusTracePreflightNode.setAttribute("data-is-drawing", chorusTracePreflight.isDrawing ? "true" : "false");
           chorusTracePreflightNode.setAttribute("data-committed-gesture-count", String(chorusTracePreflight.committedGestureCount));
           chorusTracePreflightNode.setAttribute("data-shell-loaded-ms", startupTimingSnapshot.shell_loaded_ms !== null ? String(startupTimingSnapshot.shell_loaded_ms) : "");
@@ -949,12 +994,32 @@
           requestParams.push("status_code=" + encodeURIComponent(chorusTracePreflight.statusCode));
         }
 
+        if (Object.prototype.hasOwnProperty.call(patch, "status_text")) {
+          requestParams.push("status_text=" + encodeURIComponent(chorusTracePreflight.statusText));
+        }
+
         if (Object.prototype.hasOwnProperty.call(patch, "tutorial_index")) {
           requestParams.push("tutorial_index=" + encodeURIComponent(String(chorusTracePreflight.tutorialIndex)));
         }
 
         if (Object.prototype.hasOwnProperty.call(patch, "instruction_text")) {
           requestParams.push("instruction_text=" + encodeURIComponent(chorusTracePreflight.instructionText));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "title_primary_text")) {
+          requestParams.push("title_primary_text=" + encodeURIComponent(chorusTracePreflight.titlePrimaryText));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "title_modes_visible")) {
+          requestParams.push("title_modes_visible=" + encodeURIComponent(chorusTracePreflight.titleModesVisible ? "true" : "false"));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "focused_control_name")) {
+          requestParams.push("focused_control_name=" + encodeURIComponent(chorusTracePreflight.focusedControlName));
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "tutorial_button_text")) {
+          requestParams.push("tutorial_button_text=" + encodeURIComponent(chorusTracePreflight.tutorialButtonText));
         }
 
         var startupTimingForRequest = buildChorusTraceStartupTimingSnapshot();
@@ -1115,7 +1180,7 @@
         });
       };
 
-      window.ChorusTraceSetSmokeTelemetry = function(statusText, statusCode, isDrawing, committedGestureCount, geometryJson, snapshotValue, tutorialIndex, instructionText) {
+      window.ChorusTraceSetSmokeTelemetry = function(statusText, statusCode, isDrawing, committedGestureCount, geometryJson, snapshotValue, tutorialIndex, instructionText, titlePrimaryText, titleModesVisible, focusedControlName, tutorialButtonText) {
         var parsedGeometry = null;
         if (typeof geometryJson === "string" && geometryJson.length > 0) {
           try {
@@ -1131,6 +1196,10 @@
           status_text: typeof statusText === "string" ? statusText : "",
           tutorial_index: Number.isFinite(Number(tutorialIndex)) ? Number(tutorialIndex) : -1,
           instruction_text: typeof instructionText === "string" ? instructionText : "",
+          title_primary_text: typeof titlePrimaryText === "string" ? titlePrimaryText : "",
+          title_modes_visible: (titleModesVisible | 0) !== 0,
+          focused_control_name: typeof focusedControlName === "string" ? focusedControlName : "",
+          tutorial_button_text: typeof tutorialButtonText === "string" ? tutorialButtonText : "",
           is_drawing: (isDrawing | 0) !== 0,
           committed_gesture_count: committedGestureCount | 0,
           snapshot_value: typeof snapshotValue === "string" ? snapshotValue : ""
@@ -1256,6 +1325,26 @@
             visible: !!chorusTraceSmokeGeometry.helpButton.visible,
             text: typeof chorusTraceSmokeGeometry.helpButton.text === "string" ? chorusTraceSmokeGeometry.helpButton.text : "",
             rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.helpButton.rect)
+          } : null,
+          beginButton: chorusTraceSmokeGeometry.beginButton ? {
+            visible: !!chorusTraceSmokeGeometry.beginButton.visible,
+            text: typeof chorusTraceSmokeGeometry.beginButton.text === "string" ? chorusTraceSmokeGeometry.beginButton.text : "",
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.beginButton.rect)
+          } : null,
+          titleModesButton: chorusTraceSmokeGeometry.titleModesButton ? {
+            visible: !!chorusTraceSmokeGeometry.titleModesButton.visible,
+            text: typeof chorusTraceSmokeGeometry.titleModesButton.text === "string" ? chorusTraceSmokeGeometry.titleModesButton.text : "",
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.titleModesButton.rect)
+          } : null,
+          modeBackButton: chorusTraceSmokeGeometry.modeBackButton ? {
+            visible: !!chorusTraceSmokeGeometry.modeBackButton.visible,
+            text: typeof chorusTraceSmokeGeometry.modeBackButton.text === "string" ? chorusTraceSmokeGeometry.modeBackButton.text : "",
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.modeBackButton.rect)
+          } : null,
+          tutorialButton: chorusTraceSmokeGeometry.tutorialButton ? {
+            visible: !!chorusTraceSmokeGeometry.tutorialButton.visible,
+            text: typeof chorusTraceSmokeGeometry.tutorialButton.text === "string" ? chorusTraceSmokeGeometry.tutorialButton.text : "",
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.tutorialButton.rect)
           } : null,
           directionGuides: chorusTraceSmokeGeometry.directionGuides ? {
             visible: !!chorusTraceSmokeGeometry.directionGuides.visible,
