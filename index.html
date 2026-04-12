@@ -434,6 +434,8 @@
         var resultPanel = cloneSmokeVisualRect(rawGeometry.resultPanel);
         var continueButton = cloneSmokeLabelRect(rawGeometry.continueButton);
         var replayButton = cloneSmokeLabelRect(rawGeometry.replayButton);
+        var retryButton = cloneSmokeLabelRect(rawGeometry.retryButton);
+        var resultBackButton = cloneSmokeLabelRect(rawGeometry.resultBackButton);
         var helpButton = cloneSmokeLabelRect(rawGeometry.helpButton);
         var beginButton = cloneSmokeLabelRect(rawGeometry.beginButton);
         var titleModesButton = cloneSmokeLabelRect(rawGeometry.titleModesButton);
@@ -458,6 +460,8 @@
           resultPanel: resultPanel,
           continueButton: continueButton,
           replayButton: replayButton,
+          retryButton: retryButton,
+          resultBackButton: resultBackButton,
           helpButton: helpButton,
           beginButton: beginButton,
           titleModesButton: titleModesButton,
@@ -1320,6 +1324,16 @@
             visible: !!chorusTraceSmokeGeometry.replayButton.visible,
             text: typeof chorusTraceSmokeGeometry.replayButton.text === "string" ? chorusTraceSmokeGeometry.replayButton.text : "",
             rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.replayButton.rect)
+          } : null,
+          retryButton: chorusTraceSmokeGeometry.retryButton ? {
+            visible: !!chorusTraceSmokeGeometry.retryButton.visible,
+            text: typeof chorusTraceSmokeGeometry.retryButton.text === "string" ? chorusTraceSmokeGeometry.retryButton.text : "",
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.retryButton.rect)
+          } : null,
+          resultBackButton: chorusTraceSmokeGeometry.resultBackButton ? {
+            visible: !!chorusTraceSmokeGeometry.resultBackButton.visible,
+            text: typeof chorusTraceSmokeGeometry.resultBackButton.text === "string" ? chorusTraceSmokeGeometry.resultBackButton.text : "",
+            rect: convertUnityScreenRectToViewport(chorusTraceSmokeGeometry.resultBackButton.rect)
           } : null,
           helpButton: chorusTraceSmokeGeometry.helpButton ? {
             visible: !!chorusTraceSmokeGeometry.helpButton.visible,
